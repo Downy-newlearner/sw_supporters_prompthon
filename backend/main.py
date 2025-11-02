@@ -21,14 +21,14 @@ from models import (
 from solar_api import SolarAPIClient
 from evaluator import Evaluator
 
-# Firebase Manager (선택적)
+# Supabase Manager (선택적)
 try:
-    from firebase_config import init_firebase, is_firebase_available
-    from firebase_manager import FirebaseLeaderboardManager, FirebasePromptHistoryManager
-    FIREBASE_AVAILABLE = True
+    from supabase_config import init_supabase, is_supabase_available
+    from supabase_manager import SupabaseLeaderboardManager, SupabasePromptHistoryManager
+    SUPABASE_AVAILABLE = True
 except ImportError:
-    FIREBASE_AVAILABLE = False
-    print("⚠️ Firebase 관련 패키지가 없습니다. 로컬 JSON 파일을 사용합니다.")
+    SUPABASE_AVAILABLE = False
+    print("⚠️ Supabase 관련 패키지가 없습니다. 로컬 JSON 파일을 사용합니다.")
 
 # 경로 설정
 BASE_DIR = Path(__file__).parent.parent
@@ -50,19 +50,19 @@ async def lifespan(app: FastAPI):
     """서버 시작/종료 시 초기화"""
     global evaluator, solar_client, leaderboard_manager, history_manager
     
-    # Firebase 초기화 시도
-    use_firebase = os.getenv("USE_FIREBASE", "false").lower() == "true"
-    if use_firebase and FIREBASE_AVAILABLE:
+    # Supabase 초기화 시도
+    use_supabase = os.getenv("USE_SUPABASE", "false").lower() == "true"
+    if use_supabase and SUPABASE_AVAILABLE:
         try:
-            init_firebase()
-            if is_firebase_available():
-                leaderboard_manager = FirebaseLeaderboardManager()
-                history_manager = FirebasePromptHistoryManager()
-                print("✅ Firebase Firestore를 사용합니다.")
+            init_supabase()
+            if is_supabase_available():
+                leaderboard_manager = SupabaseLeaderboardManager()
+                history_manager = SupabasePromptHistoryManager()
+                print("✅ Supabase를 사용합니다.")
             else:
-                raise Exception("Firebase 초기화 실패")
+                raise Exception("Supabase 초기화 실패")
         except Exception as e:
-            print(f"⚠️ Firebase 초기화 실패, 로컬 JSON 파일을 사용합니다: {e}")
+            print(f"⚠️ Supabase 초기화 실패, 로컬 JSON 파일을 사용합니다: {e}")
             leaderboard_manager = LeaderboardManager(filepath=str(BASE_DIR / "leaderboard.json"))
             history_manager = PromptHistoryManager(filepath=str(BASE_DIR / "prompt_history.json"))
     else:

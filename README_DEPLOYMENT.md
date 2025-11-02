@@ -3,7 +3,7 @@
 ## 배포 완료 체크리스트
 
 ### ✅ 완료된 작업
-- [x] Firebase Firestore 연동 코드 작성
+- [x] Supabase 연동 코드 작성
 - [x] Railway 배포 설정 파일 생성
 - [x] Netlify 배포 설정 파일 생성
 - [x] 환경변수 템플릿 생성
@@ -11,8 +11,8 @@
 
 ## 📋 배포 전 준비사항
 
-1. **Firebase 프로젝트 생성 및 키 발급**
-   - `FIREBASE_SETUP.md` 참고
+1. **Supabase 프로젝트 생성 및 테이블 생성**
+   - `SUPABASE_SETUP.md` 참고
 
 2. **Solar API 키 6개 준비**
    - `API_KEYS_GUIDE.md` 참고
@@ -22,22 +22,22 @@
 
 ## 🎯 배포 순서 (요약)
 
-1. **Firebase 설정** → `FIREBASE_SETUP.md` 참고
+1. **Supabase 설정** → `SUPABASE_SETUP.md` 참고
 2. **Railway 배포** → `DEPLOYMENT_GUIDE.md` 2단계 참고
 3. **Netlify 배포** → `DEPLOYMENT_GUIDE.md` 3단계 참고
 
 ## 📚 상세 가이드
 
 - **전체 배포 가이드**: `DEPLOYMENT_GUIDE.md`
-- **Firebase 설정**: `FIREBASE_SETUP.md`
+- **Supabase 설정**: `SUPABASE_SETUP.md`
 - **API 키 설정**: `API_KEYS_GUIDE.md`
 
 ## 🔧 주요 변경사항
 
 ### 백엔드
-- `firebase_config.py`: Firebase Admin SDK 초기화
-- `firebase_manager.py`: Firestore 기반 리더보드/히스토리 관리
-- `main.py`: Firebase 사용 여부 환경변수로 제어 (`USE_FIREBASE`)
+- `supabase_config.py`: Supabase 클라이언트 초기화
+- `supabase_manager.py`: Supabase 기반 리더보드/히스토리 관리
+- `main.py`: Supabase 사용 여부 환경변수로 제어 (`USE_SUPABASE`)
 
 ### 프론트엔드
 - `config.js`: 환경별 설정 (백엔드 URL)
@@ -51,16 +51,17 @@
 
 ## 💡 빠른 팁
 
-### 로컬 테스트 (Firebase 없이)
+### 로컬 테스트 (Supabase 없이)
 ```bash
 # 환경변수 설정 안 함 → 자동으로 JSON 파일 사용
 ./run.sh
 ```
 
-### Firebase 사용 (로컬)
+### Supabase 사용 (로컬)
 ```bash
-export USE_FIREBASE=true
-export FIREBASE_CONFIG_JSON='{"type":"service_account",...}'
+export USE_SUPABASE=true
+export SUPABASE_URL=https://xxxxx.supabase.co
+export SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 ./run.sh
 ```
 
@@ -68,4 +69,3 @@ export FIREBASE_CONFIG_JSON='{"type":"service_account",...}'
 
 학생들에게 Netlify URL을 공유하세요!
 - 예: `https://prompthon.netlify.app`
-
