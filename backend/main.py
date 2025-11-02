@@ -21,6 +21,15 @@ from models import (
 from solar_api import SolarAPIClient
 from evaluator import Evaluator
 
+# Firebase Manager (선택적)
+try:
+    from firebase_config import init_firebase, is_firebase_available
+    from firebase_manager import FirebaseLeaderboardManager, FirebasePromptHistoryManager
+    FIREBASE_AVAILABLE = True
+except ImportError:
+    FIREBASE_AVAILABLE = False
+    print("⚠️ Firebase 관련 패키지가 없습니다. 로컬 JSON 파일을 사용합니다.")
+
 # 경로 설정
 BASE_DIR = Path(__file__).parent.parent
 DATA_DIR = BASE_DIR / "data"
@@ -41,9 +50,26 @@ async def lifespan(app: FastAPI):
     """서버 시작/종료 시 초기화"""
     global evaluator, solar_client, leaderboard_manager, history_manager
     
-    # 시작 시 초기화
-    leaderboard_manager = LeaderboardManager(filepath=str(BASE_DIR / "leaderboard.json"))
-    history_manager = PromptHistoryManager(filepath=str(BASE_DIR / "prompt_history.json"))
+    # Firebase 초기화 시도
+    use_firebase = os.getenv("USE_FIREBASE", "false").lower() == "true"
+    if use_firebase and FIREBASE_AVAILABLE:
+        try:
+            init_firebase()
+            if is_firebase_available():
+                leaderboard_manager = FirebaseLeaderboardManager()
+                history_manager = FirebasePromptHistoryManager()
+                print("✅ Firebase Firestore를 사용합니다.")
+            else:
+                raise Exception("Firebase 초기화 실패")
+        except Exception as e:
+            print(f"⚠️ Firebase 초기화 실패, 로컬 JSON 파일을 사용합니다: {e}")
+            leaderboard_manager = LeaderboardManager(filepath=str(BASE_DIR / "leaderboard.json"))
+            history_manager = PromptHistoryManager(filepath=str(BASE_DIR / "prompt_history.json"))
+    else:
+        # 로컬 JSON 파일 사용
+        leaderboard_manager = LeaderboardManager(filepath=str(BASE_DIR / "leaderboard.json"))
+        history_manager = PromptHistoryManager(filepath=str(BASE_DIR / "prompt_history.json"))
+        print("📁 로컬 JSON 파일을 사용합니다.")
     
     try:
         # Evaluator 초기화
@@ -76,9 +102,29 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="프롬프톤 플랫폼", lifespan=lifespan)
 
 # CORS 설정
+# Netlify URL을 환경변수에서 읽어오기
+netlify_url = os.getenv("NETLIFY_URL", "")
+allowed_origins = ["*"]  # 기본값: 모든 출처 허용
+
+# Netlify URL이 설정되어 있으면 추가
+if netlify_url:
+    allowed_origins = [
+        netlify_url,
+        netlify_url.replace("https://", "http://"),  # HTTP 버전도 허용
+    ]
+    # 로컬 개발용
+    allowed_origins.extend([
+        "http://localhost:8888",
+        "http://localhost:3000",
+        "http://localhost:8000",
+    ])
+    print(f"✅ CORS 허용 출처: {allowed_origins}")
+else:
+    print("⚠️ NETLIFY_URL이 설정되지 않았습니다. 모든 출처를 허용합니다.")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

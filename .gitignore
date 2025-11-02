@@ -21,6 +21,10 @@ build/
 .env.local
 .env.*.local
 
+# Firebase 키 파일
+firebase-key.json
+**/firebase-key.json
+
 # 데이터 파일
 data/train.csv
 data/test.csv

@@ -11,8 +11,8 @@ let pdfScale = 1.2;
 let pdfDoc = null;
 let progressWebSocket = null; // 진행 상황 WebSocket 연결
 
-// API 베이스 URL
-const API_BASE = "";
+// API 베이스 URL (config.js에서 설정됨, 없으면 빈 문자열)
+const API_BASE = window.API_BASE || "";
 
 // 초기화
 document.addEventListener("DOMContentLoaded", () => {
@@ -77,10 +77,16 @@ function connectWebSocket(nickname) {
     progressWebSocket = null;
   }
 
-  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  // WebSocket URL 설정 (config.js에서 설정됨)
+  const backendWsBase =
+    window.BACKEND_WS_URL ||
+    (window.location.protocol === "https:" ? "wss:" : "ws:") +
+      "//" +
+      window.location.host;
+
   // URL 인코딩 사용 (한글 지원)
   const encodedNickname = encodeURIComponent(nickname);
-  const wsUrl = `${protocol}//${window.location.host}/api/ws/${encodedNickname}`;
+  const wsUrl = `${backendWsBase}/api/ws/${encodedNickname}`;
 
   console.log("WebSocket 연결 시도:", wsUrl);
 

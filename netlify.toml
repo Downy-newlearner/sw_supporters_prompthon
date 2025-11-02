@@ -1,0 +1,35 @@
+# Netlify 배포 설정
+
+[build]
+  # 프론트엔드 빌드 명령 (필요한 경우)
+  command = "echo 'No build needed for static site'"
+  # 빌드 결과물 디렉토리
+  publish = "frontend"
+
+# 환경 변수 설정 (UI에서 설정하는 것이 더 안전함)
+# [build.environment]
+#   BACKEND_URL = "https://your-railway-app.up.railway.app"
+
+# 리다이렉트 설정 - 모든 API 요청을 백엔드로 프록시
+[[redirects]]
+  from = "/api/*"
+  to = "https://your-railway-app.up.railway.app/api/:splat"
+  status = 200
+  force = true
+
+# WebSocket 프록시 (필요한 경우)
+# Netlify는 WebSocket을 직접 지원하지 않으므로
+# 클라이언트에서 백엔드 URL을 직접 사용해야 함
+
+[[redirects]]
+  from = "/ws/*"
+  to = "wss://your-railway-app.up.railway.app/ws/:splat"
+  status = 200
+  force = true
+
+# SPA 라우팅을 위한 fallback
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
