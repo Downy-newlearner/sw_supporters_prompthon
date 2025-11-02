@@ -1,5 +1,9 @@
 # Nixpacks 빌드 설정 (Railway에서 사용)
-# Python과 pip는 자동으로 감지됩니다
+[providers]
+python = "3.11"
+
+[phases.setup]
+nixPkgs = ["python311", "python311Packages.pip"]
 
 [phases.install]
 cmds = [
