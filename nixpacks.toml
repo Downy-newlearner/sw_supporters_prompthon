@@ -1,13 +1,11 @@
 # Nixpacks 빌드 설정 (Railway에서 사용)
-[phases.setup]
-nixPkgs = ["python3", "python3Packages.pip"]
+# Python과 pip는 자동으로 감지됩니다
 
 [phases.install]
 cmds = [
-  "python3 -m pip install --upgrade pip",
-  "cd backend && python3 -m pip install -r requirements.txt"
+  "pip install --upgrade pip",
+  "cd backend && pip install -r requirements.txt"
 ]
 
 [start]
-cmd = "cd backend && python3 -m uvicorn main:app --host 0.0.0.0 --port $PORT"
-
+cmd = "cd backend && python -m uvicorn main:app --host 0.0.0.0 --port $PORT"
