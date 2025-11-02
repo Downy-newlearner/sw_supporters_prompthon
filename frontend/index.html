@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>프롬프톤 - 한국어 문법 교정 챌린지</title>
+    <link rel="stylesheet" href="/static/style.css" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  </head>
+  <body>
+    <!-- 로그인 화면 -->
+    <div id="login-screen" class="screen active">
+      <div class="login-container">
+        <h1>🚀 프롬프톤</h1>
+        <h2>한국어 문법 교정 챌린지</h2>
+        <div class="login-form">
+          <input
+            type="text"
+            id="nickname-input"
+            placeholder="닉네임을 입력하세요"
+            maxlength="20"
+            autocomplete="off"
+          />
+          <button id="login-button" onclick="handleLogin()">시작하기</button>
+        </div>
+        <p class="login-info">💡 프롬프트를 작성하여 최고 점수에 도전하세요!</p>
+      </div>
+    </div>
+
+    <!-- 메인 화면 -->
+    <div id="main-screen" class="screen">
+      <header class="header">
+        <h1>프롬프톤 - 한국어 문법 교정</h1>
+        <div class="user-info">
+          <span id="current-user">사용자</span>
+          <button onclick="handleLogout()" class="logout-btn">로그아웃</button>
+        </div>
+      </header>
+
+      <div class="main-content">
+        <!-- 좌측: PDF 뷰어 -->
+        <div class="left-panel">
+          <div class="panel-header">
+            <h3>📚 프롬프트 가이드</h3>
+            <select id="pdf-selector" onchange="loadSelectedPDF()">
+              <option value="">PDF 선택...</option>
+            </select>
+          </div>
+          <div class="pdf-container">
+            <canvas id="pdf-canvas"></canvas>
+            <div id="pdf-loading" class="pdf-loading">PDF를 선택하세요</div>
+          </div>
+          <div class="pdf-controls">
+            <button onclick="previousPage()" id="prev-page">이전</button>
+            <span id="page-info">-</span>
+            <button onclick="nextPage()" id="next-page">다음</button>
+            <button onclick="zoomIn()" class="zoom-btn">확대</button>
+            <button onclick="zoomOut()" class="zoom-btn">축소</button>
+          </div>
+        </div>
+
+        <!-- 우측: 프롬프트 입력 및 리더보드 -->
+        <div class="right-panel">
+          <!-- 프롬프트 입력 섹션 -->
+          <div class="prompt-section">
+            <div class="section-header">
+              <h3>✍️ 프롬프트 입력</h3>
+              <button onclick="showHistory()" class="history-btn">
+                📜 히스토리
+              </button>
+            </div>
+            <textarea
+              id="prompt-input"
+              placeholder="여기에 프롬프트를 작성하세요...&#10;&#10;예시:&#10;당신은 한국어 문법 전문가입니다. 주어진 문장의 맞춤법, 띄어쓰기, 문법 오류를 교정하여 올바른 문장으로 수정해주세요. 오류가 없는 부분은 그대로 유지하고, 오류가 있는 부분만 수정하여 자연스러운 한국어 문장을 만들어주세요."
+              rows="10"
+            ></textarea>
+
+            <div class="submit-section">
+              <button
+                id="submit-button"
+                onclick="handleSubmit()"
+                class="submit-btn"
+              >
+                제출하기
+              </button>
+            </div>
+
+            <!-- 진행 상태 -->
+            <div
+              id="progress-container"
+              class="progress-container"
+              style="display: none"
+            >
+              <div class="progress-bar">
+                <div id="progress-fill" class="progress-fill"></div>
+              </div>
+              <p id="progress-text">처리 중...</p>
+            </div>
+
+            <!-- 결과 표시 -->
+            <div
+              id="result-container"
+              class="result-container"
+              style="display: none"
+            >
+              <div id="result-message" class="result-message"></div>
+            </div>
+          </div>
+
+          <!-- 리더보드 섹션 -->
+          <div class="leaderboard-section">
+            <h3>🏆 리더보드</h3>
+            <div class="leaderboard-container">
+              <table id="leaderboard-table">
+                <thead>
+                  <tr>
+                    <th>순위</th>
+                    <th>닉네임</th>
+                    <th>점수</th>
+                    <th>제출 횟수</th>
+                  </tr>
+                </thead>
+                <tbody id="leaderboard-body">
+                  <tr>
+                    <td colspan="4" class="no-data">데이터가 없습니다</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 프롬프트 히스토리 모달 -->
+    <div id="history-modal" class="modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>📜 내 프롬프트 히스토리</h2>
+          <span class="close" onclick="closeHistory()">&times;</span>
+        </div>
+        <div class="modal-body">
+          <div id="history-stats" class="history-stats"></div>
+          <div id="history-list" class="history-list">
+            <p class="no-data">히스토리를 불러오는 중...</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script src="/static/script.js"></script>
+  </body>
+</html>
