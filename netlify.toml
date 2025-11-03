@@ -1,10 +1,11 @@
 # Netlify 배포 설정
 
 [build]
-  # 프론트엔드 빌드 명령 (필요한 경우)
-  command = "echo 'No build needed for static site'"
-  # 빌드 결과물 디렉토리
-  publish = "frontend"
+  # 정적 사이트이므로 빌드 명령 없음
+  command = ""
+  # frontend를 베이스로, 그 안의 파일들을 루트로 서빙
+  base = "frontend"
+  publish = "."
 
 # 환경 변수 설정 (UI에서 설정하는 것이 더 안전함)
 # [build.environment]
