@@ -32,7 +32,19 @@ except ImportError:
 
 # 경로 설정
 BASE_DIR = Path(__file__).parent.parent
-DATA_DIR = BASE_DIR / "data"
+
+# 데이터 디렉터리: backend/data 우선, 없으면 레포 루트의 data 사용
+DATA_DIR_CANDIDATES = [
+    Path(__file__).parent / "data",         # backend/data
+    BASE_DIR / "data",                      # repo_root/data
+]
+for _cand in DATA_DIR_CANDIDATES:
+    if _cand.exists():
+        DATA_DIR = _cand
+        break
+else:
+    DATA_DIR = DATA_DIR_CANDIDATES[0]
+
 FRONTEND_DIR = BASE_DIR / "frontend"
 PDF_DIR = BASE_DIR / "Solar_prompt_cookbook"
 
