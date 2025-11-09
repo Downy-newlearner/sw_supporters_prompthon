@@ -31,6 +31,7 @@ class PrompthonUser(FastHttpUser):
         self.pending_submit = False  # 제출이 진행 중인지 여부
         self.submit_start_time = 0  # 제출 시작 시간 (타임아웃 체크용)
         self.submit_lock = threading.Lock()  # 제출 상태 동기화용
+        self._submitting = False  # 제출 진행 중 플래그 (이중 체크용)
         
         # 로그인
         try:
@@ -85,9 +86,13 @@ class PrompthonUser(FastHttpUser):
                             next_interval = random.uniform(180, 300)
                             self.next_submit_time = complete_time + next_interval
                             self.pending_submit = False
+                            self._submitting = False
                             self.submit_start_time = 0
                             
-                            logger.info(f"🔓 제출 잠금 해제: {self.nickname} - pending_submit=False")
+                            logger.info(
+                                f"🔓 제출 잠금 해제: {self.nickname} - "
+                                f"pending_submit=False, _submitting=False"
+                            )
                         
                         wait_minutes = next_interval / 60
                         logger.info(
@@ -98,8 +103,12 @@ class PrompthonUser(FastHttpUser):
                         # 오류 발생 시에도 제출 상태 해제
                         with self.submit_lock:
                             self.pending_submit = False
+                            self._submitting = False
                             self.submit_start_time = 0
-                            logger.info(f"🔓 제출 잠금 해제 (오류): {self.nickname} - pending_submit=False")
+                            logger.info(
+                                f"🔓 제출 잠금 해제 (오류): {self.nickname} - "
+                                f"pending_submit=False, _submitting=False"
+                            )
                         logger.error(f"❌ WebSocket 오류: {self.nickname} - {data.get('message')}")
                 except Exception as e:
                     logger.error(f"❌ WebSocket 메시지 파싱 오류: {e} - {message}")
@@ -185,9 +194,13 @@ class PrompthonUser(FastHttpUser):
         조건:
         1. 제출 완료 후에만 다시 제출 가능
         2. 마지막 제출 완료 후 3-5분(180-300초) 사이에 제출
-        3. 동시에 여러 제출 방지
+        3. 동시에 여러 제출 방지 (이중 체크)
         """
         current_time = time.time()
+        
+        # 빠른 사전 체크 (락 없이, 성능 최적화)
+        if self._submitting:
+            return
         
         # 제출 상태 확인 및 업데이트 (스레드 안전)
         with self.submit_lock:
@@ -201,13 +214,15 @@ class PrompthonUser(FastHttpUser):
                     )
                     self.pending_submit = False
                     self.submit_start_time = 0
+                    self._submitting = False
             
             # 이미 제출이 진행 중이면 skip
-            if self.pending_submit:
+            if self.pending_submit or self._submitting:
                 elapsed = current_time - self.submit_start_time if self.submit_start_time > 0 else 0
                 logger.info(
                     f"⏸️ 제출 차단: {self.nickname} - "
-                    f"진행 중인 제출이 있어 건너뜀 (경과: {elapsed:.0f}초)"
+                    f"진행 중인 제출이 있어 건너뜀 (경과: {elapsed:.0f}초, "
+                    f"pending_submit={self.pending_submit}, _submitting={self._submitting})"
                 )
                 return
             
@@ -221,12 +236,18 @@ class PrompthonUser(FastHttpUser):
                 )
                 return
             
-            # 제출 시작 표시
+            # 제출 시작 표시 (락 내부에서 원자적으로 설정)
             self.pending_submit = True
+            self._submitting = True
             self.submit_start_time = current_time
-            logger.info(f"🔒 제출 잠금 설정: {self.nickname} - pending_submit=True")
+            self.submit_count += 1
+            submit_count = self.submit_count
+            logger.info(
+                f"🔒 제출 잠금 설정: {self.nickname} - "
+                f"pending_submit=True, _submitting=True, submit_count={submit_count}"
+            )
         
-        # 샘플 프롬프트 (실제 사용 시나리오 시뮬레이션)
+        # 락 밖에서 제출 준비 (락을 오래 잡지 않기 위해)
         prompts = [
             "다음 문장의 오류를 수정하세요. 문법과 맞춤법을 확인하세요.",
             "문장을 자연스럽고 정확하게 수정해주세요.",
@@ -234,12 +255,10 @@ class PrompthonUser(FastHttpUser):
             "문법 오류를 찾아서 수정하세요.",
             "문장을 올바르게 교정해주세요.",
         ]
-        
         prompt = random.choice(prompts)
-        self.submit_count += 1
         
         # 제출 시작 로그
-        logger.info(f"📤 제출 시작: {self.nickname} (#{self.submit_count})")
+        logger.info(f"📤 제출 시작: {self.nickname} (#{submit_count})")
         
         try:
             with self.client.post(
@@ -257,40 +276,54 @@ class PrompthonUser(FastHttpUser):
                         data = response.json()
                         if data.get("success"):
                             response.success()
+                            # pending_submit 상태 확인
+                            with self.submit_lock:
+                                is_pending = self.pending_submit
+                                is_submitting = self._submitting
+                            
                             logger.info(
-                                f"✅ 제출 요청 성공: {self.nickname} (#{self.submit_count}) - "
-                                f"처리 중... (WebSocket으로 완료 알림 대기)"
+                                f"✅ 제출 요청 성공: {self.nickname} (#{submit_count}) - "
+                                f"처리 중... (WebSocket으로 완료 알림 대기, "
+                                f"pending_submit={is_pending}, _submitting={is_submitting})"
                             )
+                            # _submitting은 즉시 해제 (API 호출 완료)
                             # pending_submit은 WebSocket 완료 메시지에서 해제됨
+                            with self.submit_lock:
+                                self._submitting = False
                         else:
                             # 실패 시 상태 해제
                             with self.submit_lock:
                                 self.pending_submit = False
+                                self._submitting = False
                                 self.submit_start_time = 0
-                                logger.info(f"🔓 제출 잠금 해제 (실패): {self.nickname} - pending_submit=False")
+                                logger.info(f"🔓 제출 잠금 해제 (실패): {self.nickname}")
                             response.failure(f"제출 실패: {data.get('message')}")
-                    except:
+                    except Exception as e:
                         # 실패 시 상태 해제
                         with self.submit_lock:
                             self.pending_submit = False
+                            self._submitting = False
                             self.submit_start_time = 0
-                            logger.info(f"🔓 제출 잠금 해제 (파싱 오류): {self.nickname} - pending_submit=False")
+                            logger.info(f"🔓 제출 잠금 해제 (파싱 오류): {self.nickname}")
+                        logger.error(f"❌ JSON 파싱 오류: {e}")
                         response.failure("JSON 파싱 실패")
                 else:
                     # 실패 시 상태 해제
                     with self.submit_lock:
                         self.pending_submit = False
+                        self._submitting = False
                         self.submit_start_time = 0
-                        logger.info(f"🔓 제출 잠금 해제 (HTTP 오류): {self.nickname} - pending_submit=False")
+                        logger.info(f"🔓 제출 잠금 해제 (HTTP 오류): {self.nickname}")
                     response.failure(f"HTTP {response.status_code}")
         except Exception as e:
             # 예외 발생 시 상태 해제
             with self.submit_lock:
                 self.pending_submit = False
+                self._submitting = False
                 self.submit_start_time = 0
-                logger.info(f"🔓 제출 잠금 해제 (예외): {self.nickname} - pending_submit=False")
+                logger.info(f"🔓 제출 잠금 해제 (예외): {self.nickname}")
             logger.error(f"❌ 제출 요청 오류: {e}")
-            raise
+            # 예외는 다시 발생시키지 않음 (Locust가 계속 실행되도록)
     
     @task(3)
     def get_pdfs(self):

@@ -465,7 +465,8 @@ async def process_submission(
         corrected_results = await solar_client.correct_batch(
             prompt=prompt,
             sentences=sentences,
-            callback=correction_callback
+            callback=correction_callback,
+            nickname=nickname
         )
         
         await send_progress(nickname, "ai_correction", 100, 
