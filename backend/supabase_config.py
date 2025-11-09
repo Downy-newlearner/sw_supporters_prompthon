@@ -76,7 +76,7 @@ def init_supabase() -> Client:
                 f"SUPABASE_URL을 확인하세요: {supabase_url}"
             )
         else:
-            raise
+        raise
 
 def get_supabase() -> Client:
     """Supabase 클라이언트 인스턴스 반환"""

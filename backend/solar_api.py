@@ -6,6 +6,7 @@ import time
 from dotenv import load_dotenv
 from pathlib import Path
 import heapq
+import itertools
 import httpx
 
 # .env 파일 로드 (상위 디렉토리의 .env 파일)
@@ -14,12 +15,12 @@ load_dotenv(dotenv_path=env_path)
 
 class SolarAPIClient:
     def __init__(self):
-        """Solar API 클라이언트 초기화 - 여러 API 키 지원 (최대 10개)"""
-        # 여러 API 키 로드 (SOLAR_API_KEY_1 ~ SOLAR_API_KEY_10)
+        """Solar API 클라이언트 초기화 - 여러 API 키 지원 (최대 20개)"""
+        # 여러 API 키 로드 (SOLAR_API_KEY_1 ~ SOLAR_API_KEY_20)
         self.api_keys = []
         self.clients = []
         
-        for i in range(1, 11):  # 1부터 10까지
+        for i in range(1, 21):  # 1부터 20까지
             key = os.getenv(f"SOLAR_API_KEY_{i}", "")
             # 유효한 키만 추가 (비어있지 않고, "your_api_key"로 시작하지 않음)
             if key and not key.startswith("your_api_key"):
@@ -49,7 +50,7 @@ class SolarAPIClient:
         if not self.api_keys:
             raise ValueError(
                 "Solar API 키가 설정되지 않았습니다.\n"
-                ".env 파일에 SOLAR_API_KEY_1 ~ SOLAR_API_KEY_10을 설정하거나\n"
+                ".env 파일에 SOLAR_API_KEY_1 ~ SOLAR_API_KEY_20을 설정하거나\n"
                 "환경변수로 SOLAR_API_KEY를 설정해주세요."
             )
         
@@ -63,9 +64,10 @@ class SolarAPIClient:
         self.api_key_submission_count = {i: 0 for i in range(len(self.clients))}
         
         # 각 API 키별 세마포어: API 키당 동시 처리 가능한 문장 수 제한
-        # 각 API 키가 3개 제출을 담당할 때, 각 제출의 문장들을 동시에 처리하는 것을 제한
-        # 예: 키당 최대 20개 문장을 동시에 처리 (3개 제출 × 평균 6-7개 동시 처리)
-        self.key_semaphores = [asyncio.Semaphore(20) for _ in self.clients]
+        # 키당 최대 5개 동시 처리 (30명 사용자, 24개 제출 동시 처리 최적화)
+        # 라운드로빈으로 모든 키를 공유하므로 총 20개 키 × 5개 = 100개 동시 처리 가능
+        self.concurrent_per_key = 5
+        self.key_semaphores = [asyncio.Semaphore(self.concurrent_per_key) for _ in self.clients]
         
         # 우선순위 큐: (submission_count, api_key_index) 튜플의 리스트
         # submission_count가 적을수록 우선순위가 높음
@@ -86,8 +88,10 @@ class SolarAPIClient:
         self.max_retries = 3
         
         max_total_submissions = len(self.clients) * self.max_submissions_per_key
+        total_concurrent = len(self.clients) * self.concurrent_per_key
         print(f"📊 제출 할당 설정: 키당 최대 {self.max_submissions_per_key}개 제출, 총 {max_total_submissions}개 제출 동시 처리 가능")
-        print(f"   각 API 키당 최대 20개 문장 동시 처리 (세마포어로 제한)")
+        print(f"   라운드로빈 방식으로 모든 API 키 공유 사용")
+        print(f"   키당 최대 {self.concurrent_per_key}개 동시 처리, 총 {total_concurrent}개 문장 동시 처리 가능")
     
     async def _assign_api_key(self) -> Optional[int]:
         """
@@ -226,53 +230,57 @@ class SolarAPIClient:
     async def correct_sentence(
         self, 
         prompt: str, 
-        err_sentence: str, 
-        api_key_index: int
+        err_sentence: str
     ) -> str:
         """
-        단일 문장 교정 (할당된 API 키 사용)
-        api_key_index: 할당된 API 키의 인덱스
-        세마포어로 API 키당 동시 처리 수 제한
+        단일 문장 교정 (라운드로빈 방식으로 API 키 선택)
+        이전 방식처럼 모든 API 키를 공유하여 사용
         """
         system_prompt = prompt
         user_message = f"다음 문장을 교정해주세요: {err_sentence}"
         
-        client = self.clients[api_key_index]
         last_error = None
+        last_client_idx = None
         
-        # 해당 API 키의 세마포어 획득 (동시 처리 수 제한)
-        async with self.key_semaphores[api_key_index]:
-            # 최대 재시도 횟수만큼 시도
-            for attempt in range(self.max_retries):
-                try:
-                    # 동기 함수를 비동기로 실행
-                    loop = asyncio.get_event_loop()
-                    response = await loop.run_in_executor(
-                        None,
+        # 최대 재시도 횟수만큼 시도
+        for attempt in range(self.max_retries):
+            try:
+                # 라운드로빈으로 클라이언트 선택 (이전 방식)
+                async with self.allocation_lock:
+                    client_idx, client = next(self.client_cycle)
+                    last_client_idx = client_idx
+                
+                # 해당 키의 세마포어 획득 (동시 처리 수 제한)
+                async with self.key_semaphores[client_idx]:
+                # 동기 함수를 비동기로 실행
+                loop = asyncio.get_event_loop()
+                response = await loop.run_in_executor(
+                    None,
                         lambda c=client, sp=system_prompt, um=user_message: c.chat.completions.create(
-                            model=self.model,
-                            messages=[
+                        model=self.model,
+                        messages=[
                                 {"role": "system", "content": sp},
                                 {"role": "user", "content": um}
-                            ],
-                            temperature=0.1,
-                            max_tokens=500
-                        )
+                        ],
+                        temperature=0.1,
+                        max_tokens=500
                     )
-                    
-                    corrected = response.choices[0].message.content.strip()
-                    return corrected
+                )
                 
-                except Exception as e:
-                    last_error = e
-                    # 재시도 전 대기 (지수 백오프)
-                    if attempt < self.max_retries - 1:
-                        wait_time = 1 * (attempt + 1)
-                        await asyncio.sleep(wait_time)
+                corrected = response.choices[0].message.content.strip()
+                return corrected
+            
+            except Exception as e:
+                last_error = e
+                # 재시도 전 대기 (지수 백오프)
+                if attempt < self.max_retries - 1:
+                    wait_time = 1 * (attempt + 1)
+                    await asyncio.sleep(wait_time)
         
         # 모든 재시도 실패
-        print(f"Error correcting sentence (API key #{api_key_index + 1}, {self.max_retries}회 시도 실패): {last_error}")
-        return err_sentence  # 실패 시 원본 반환
+        key_info = f"API key #{last_client_idx + 1}" if last_client_idx is not None else "모든 API key"
+        print(f"Error correcting sentence ({key_info}, {self.max_retries}회 시도 실패): {last_error}")
+                    return err_sentence  # 실패 시 원본 반환
     
     async def correct_batch(
         self, 
@@ -283,29 +291,29 @@ class SolarAPIClient:
     ) -> List[Tuple[str, str]]:
         """
         배치로 문장 교정 (진행 상황 실시간 콜백)
-        제출 단위로 API 키를 할당받아 사용
+        하이브리드 방식: 제출 단위 제한은 유지하지만, 라운드로빈으로 모든 API 키 공유 사용
         sentences: [(id, err_sentence), ...]
         returns: [(id, corrected_sentence), ...]
         """
         total = len(sentences)
         
-        # 1. API 키 할당 요청 (할당 가능할 때까지 대기)
+        # 1. API 키 할당 요청 (제출 단위 제한 유지)
         api_key_index = await self.request_submission_allocation(nickname)
         
         try:
-            print(f"📊 배치 처리 시작: {nickname} - {total}개 문장, API 키 #{api_key_index + 1} 사용")
-            
-            # 완료된 작업 수 추적 (스레드 안전)
-            completed = 0
-            completed_lock = asyncio.Lock()
-            start_time = time.time()
-            
+            print(f"📊 배치 처리 시작: {nickname} - {total}개 문장, 모든 API 키 공유 사용 (라운드로빈)")
+        
+        # 완료된 작업 수 추적 (스레드 안전)
+        completed = 0
+        completed_lock = asyncio.Lock()
+        start_time = time.time()
+        
             async def process_sentence(idx, item):
-                nonlocal completed
-                
-                # 할당된 API 키를 사용하여 문장 교정
+            nonlocal completed
+            
+                # 라운드로빈 방식으로 모든 API 키 공유 사용 (이전 방식)
                 id_val, err_sentence = item
-                corrected = await self.correct_sentence(prompt, err_sentence, api_key_index)
+                corrected = await self.correct_sentence(prompt, err_sentence)
                 
                 # 진행 상황 업데이트 (스레드 안전)
                 async with completed_lock:
@@ -318,33 +326,23 @@ class SolarAPIClient:
                     await callback(current, total, id_val)
                 
                 return (id_val, corrected)
-            
-            # 배치 단위로 문장 처리 (메모리 최적화)
-            # 각 API 키가 3개 제출을 담당할 수 있으므로, 각 제출의 문장을 작은 배치로 나눠 처리
-            # 배치 크기: 50개씩 (충분히 크면서도 메모리 효율적)
-            batch_size = 50
-            all_results = []
-            
-            for batch_start in range(0, total, batch_size):
-                batch_end = min(batch_start + batch_size, total)
-                batch_sentences = sentences[batch_start:batch_end]
-                
-                # 현재 배치의 모든 문장을 비동기로 처리
-                tasks = [
-                    process_sentence(batch_start + idx, item) 
-                    for idx, item in enumerate(batch_sentences)
-                ]
-                
-                batch_results = await asyncio.gather(*tasks)
-                all_results.extend(batch_results)
-            
-            total_time = time.time() - start_time
+        
+            # 모든 문장을 비동기로 처리 (이전 방식과 동일)
+            # 라운드로빈으로 모든 API 키를 공유하여 사용
+        tasks = [
+                process_sentence(idx, item) 
+            for idx, item in enumerate(sentences)
+        ]
+        
+        results = await asyncio.gather(*tasks)
+        
+        total_time = time.time() - start_time
             print(f"✅ 배치 처리 완료: {nickname} - {total}개 문장 ({total_time:.2f}초, 평균 {total/total_time:.2f}개/초)")
-            
-            return all_results
+        
+        return results
             
         finally:
             # 제출 완료 후 API 키 해제
             await self._release_api_key(api_key_index)
-            print(f"🏁 제출 완료: {nickname} - API 키 #{api_key_index + 1} 해제")
+            print(f"🏁 제출 완료: {nickname} - API 키 할당 해제")
 
