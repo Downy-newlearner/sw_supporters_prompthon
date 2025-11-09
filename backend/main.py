@@ -89,21 +89,44 @@ async def lifespan(app: FastAPI):
         answer_csv_path = DATA_DIR / "answer_from_train.csv"
         
         if not test_csv_path.exists():
-            print(f"경고: test_from_train.csv를 찾을 수 없습니다: {test_csv_path}")
+            print(f"❌ 경고: test_from_train.csv를 찾을 수 없습니다: {test_csv_path}")
+            print(f"   현재 DATA_DIR: {DATA_DIR}")
+            print(f"   DATA_DIR 존재 여부: {DATA_DIR.exists()}")
         elif not answer_csv_path.exists():
-            print(f"경고: answer_from_train.csv를 찾을 수 없습니다: {answer_csv_path}")
+            print(f"❌ 경고: answer_from_train.csv를 찾을 수 없습니다: {answer_csv_path}")
+            print(f"   현재 DATA_DIR: {DATA_DIR}")
+            print(f"   DATA_DIR 존재 여부: {DATA_DIR.exists()}")
         else:
-            evaluator = Evaluator(str(test_csv_path), str(answer_csv_path))
-            print("✅ Evaluator 초기화 완료")
+            try:
+                evaluator = Evaluator(str(test_csv_path), str(answer_csv_path))
+                print("✅ Evaluator 초기화 완료")
+            except Exception as e:
+                print(f"❌ Evaluator 초기화 실패: {e}")
+                import traceback
+                traceback.print_exc()
         
         # Solar API 클라이언트 초기화
-        solar_client = SolarAPIClient()
-        print("✅ Solar API 클라이언트 초기화 완료")
+        try:
+            solar_client = SolarAPIClient()
+            print("✅ Solar API 클라이언트 초기화 완료")
+        except Exception as e:
+            print(f"❌ Solar API 클라이언트 초기화 실패: {e}")
+            import traceback
+            traceback.print_exc()
         
     except Exception as e:
-        print(f"❌ 초기화 중 오류: {e}")
+        print(f"❌ 초기화 중 예상치 못한 오류: {e}")
         import traceback
         traceback.print_exc()
+    
+    # 초기화 상태 확인 및 로깅
+    print("\n" + "="*50)
+    print("초기화 상태 확인:")
+    print(f"  - leaderboard_manager: {'✅' if leaderboard_manager else '❌'}")
+    print(f"  - history_manager: {'✅' if history_manager else '❌'}")
+    print(f"  - evaluator: {'✅' if evaluator else '❌'}")
+    print(f"  - solar_client: {'✅' if solar_client else '❌'}")
+    print("="*50 + "\n")
     
     yield  # 서버 실행 중
     
@@ -222,47 +245,81 @@ async def submit_prompt(request: SubmitRequest):
     """프롬프트 제출 및 평가 (비동기 백그라운드 작업)"""
     global evaluator, solar_client, leaderboard_manager, history_manager
     
-    if not solar_client:
-        raise HTTPException(status_code=500, detail="Solar API 클라이언트가 초기화되지 않았습니다.")
-    
-    if not evaluator:
-        raise HTTPException(status_code=500, detail="평가 시스템이 초기화되지 않았습니다.")
-    
-    nickname = request.nickname.strip()
-    prompt = request.prompt.strip()
-    
-    if not prompt:
-        raise HTTPException(status_code=400, detail="프롬프트를 입력해주세요.")
-    
-    # 비동기 작업을 백그라운드에서 실행
-    asyncio.create_task(
-        process_submission(
-            nickname,
-            prompt,
-            evaluator,
-            solar_client,
-            leaderboard_manager,
-            history_manager
+    try:
+        print(f"📥 제출 요청 수신: nickname={request.nickname}, prompt_length={len(request.prompt) if request.prompt else 0}")
+        
+        # 초기화 상태 확인
+        if not solar_client:
+            print("❌ Solar API 클라이언트가 초기화되지 않았습니다.")
+            raise HTTPException(status_code=500, detail="Solar API 클라이언트가 초기화되지 않았습니다.")
+        
+        if not evaluator:
+            print("❌ 평가 시스템이 초기화되지 않았습니다.")
+            raise HTTPException(status_code=500, detail="평가 시스템이 초기화되지 않았습니다.")
+        
+        if not leaderboard_manager:
+            print("❌ 리더보드 관리자가 초기화되지 않았습니다.")
+            raise HTTPException(status_code=500, detail="리더보드 관리자가 초기화되지 않았습니다.")
+        
+        if not history_manager:
+            print("❌ 히스토리 관리자가 초기화되지 않았습니다.")
+            raise HTTPException(status_code=500, detail="히스토리 관리자가 초기화되지 않았습니다.")
+        
+        nickname = request.nickname.strip()
+        prompt = request.prompt.strip()
+        
+        if not nickname:
+            raise HTTPException(status_code=400, detail="닉네임을 입력해주세요.")
+        
+        if not prompt:
+            raise HTTPException(status_code=400, detail="프롬프트를 입력해주세요.")
+        
+        print(f"✅ 제출 요청 검증 완료: {nickname}")
+        
+        # 비동기 작업을 백그라운드에서 실행
+        task = asyncio.create_task(
+            process_submission(
+                nickname,
+                prompt,
+                evaluator,
+                solar_client,
+                leaderboard_manager,
+                history_manager
+            )
         )
-    )
-    
-    # 즉시 응답 반환 (작업은 백그라운드에서 진행)
-    return SubmitResponse(
-        success=True,
-        message="처리를 시작했습니다. 진행 상황은 실시간으로 업데이트됩니다.",
-        score=0.0,
-        total_processed=0
-    )
+        print(f"✅ 백그라운드 작업 시작: {nickname} (task={task})")
+        
+        # 즉시 응답 반환 (작업은 백그라운드에서 진행)
+        return SubmitResponse(
+            success=True,
+            message="처리를 시작했습니다. 진행 상황은 실시간으로 업데이트됩니다.",
+            score=0.0,
+            total_processed=0
+        )
+    except HTTPException as he:
+        # HTTPException은 그대로 전달
+        print(f"❌ HTTPException 발생: {he.status_code} - {he.detail}")
+        raise
+    except Exception as e:
+        # 예상치 못한 오류 로깅
+        print(f"❌ 제출 요청 처리 중 예상치 못한 오류: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"서버 오류가 발생했습니다: {str(e)}")
 
 @app.get("/api/leaderboard", response_model=LeaderboardResponse)
 async def get_leaderboard():
     """리더보드 조회"""
+    if not leaderboard_manager:
+        raise HTTPException(status_code=500, detail="리더보드 관리자가 초기화되지 않았습니다.")
     leaderboard = leaderboard_manager.get_leaderboard()
     return LeaderboardResponse(leaderboard=leaderboard)
 
 @app.get("/api/history/{nickname}", response_model=PromptHistoryResponse)
 async def get_prompt_history(nickname: str):
     """사용자의 프롬프트 히스토리 조회"""
+    if not history_manager:
+        raise HTTPException(status_code=500, detail="히스토리 관리자가 초기화되지 않았습니다.")
     history = history_manager.get_history(nickname)
     return PromptHistoryResponse(
         history=history,
