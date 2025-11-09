@@ -71,7 +71,7 @@ class PrompthonUser(FastHttpUser):
                         if progress % 25 == 0:  # 25% 단위로만 로깅
                             logger.debug(f"📊 진행: {self.nickname} - {stage} {progress}%")
                     elif data.get("type") == "complete":
-                        # 제출 완료 시 다음 제출 시간 설정 (3-5분 후 랜덤)
+                        # 제출 완료 시 상태 해제
                         with self.submit_lock:
                             complete_time = time.time()
                             processing_time = complete_time - self.submit_start_time if self.submit_start_time > 0 else 0
@@ -82,9 +82,7 @@ class PrompthonUser(FastHttpUser):
                                     f"이미 해제된 상태일 수 있음"
                                 )
                             
-                            # 3-5분(180-300초) 사이의 랜덤 간격 추가
-                            next_interval = random.uniform(180, 300)
-                            self.next_submit_time = complete_time + next_interval
+                            # 제출 완료 후 더 이상 제출하지 않음
                             self.pending_submit = False
                             self._submitting = False
                             self.submit_start_time = 0
@@ -94,10 +92,9 @@ class PrompthonUser(FastHttpUser):
                                 f"pending_submit=False, _submitting=False"
                             )
                         
-                        wait_minutes = next_interval / 60
                         logger.info(
                             f"✅ 제출 완료: {self.nickname} - 점수: {data.get('score', 0)} - "
-                            f"처리 시간: {processing_time:.1f}초 - 다음 제출 {wait_minutes:.1f}분 후 가능"
+                            f"처리 시간: {processing_time:.1f}초 - 더 이상 제출하지 않음 (1회 제한)"
                         )
                     elif data.get("type") == "error":
                         # 오류 발생 시에도 제출 상태 해제
@@ -192,11 +189,14 @@ class PrompthonUser(FastHttpUser):
         """
         프롬프트 제출 (무거운 작업)
         조건:
-        1. 제출 완료 후에만 다시 제출 가능
-        2. 마지막 제출 완료 후 3-5분(180-300초) 사이에 제출
-        3. 동시에 여러 제출 방지 (이중 체크)
+        1. 각 유저는 1번만 제출 가능
+        2. 동시에 여러 제출 방지 (이중 체크)
         """
         current_time = time.time()
+        
+        # 이미 1번 제출했으면 skip
+        if self.submit_count >= 1:
+            return
         
         # 빠른 사전 체크 (락 없이, 성능 최적화)
         if self._submitting:
@@ -216,6 +216,10 @@ class PrompthonUser(FastHttpUser):
                     self.submit_start_time = 0
                     self._submitting = False
             
+            # 이미 1번 제출했으면 skip
+            if self.submit_count >= 1:
+                return
+            
             # 이미 제출이 진행 중이면 skip
             if self.pending_submit or self._submitting:
                 elapsed = current_time - self.submit_start_time if self.submit_start_time > 0 else 0
@@ -223,16 +227,6 @@ class PrompthonUser(FastHttpUser):
                     f"⏸️ 제출 차단: {self.nickname} - "
                     f"진행 중인 제출이 있어 건너뜀 (경과: {elapsed:.0f}초, "
                     f"pending_submit={self.pending_submit}, _submitting={self._submitting})"
-                )
-                return
-            
-            # 다음 제출 시간 확인
-            # 첫 제출이거나 다음 제출 시간이 지났으면 제출 가능
-            if self.next_submit_time > 0 and current_time < self.next_submit_time:
-                wait_time = self.next_submit_time - current_time
-                logger.info(
-                    f"⏳ 제출 대기: {self.nickname} - "
-                    f"다음 제출까지 {wait_time/60:.1f}분 남음"
                 )
                 return
             
