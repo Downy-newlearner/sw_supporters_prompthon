@@ -127,8 +127,8 @@ async def lifespan(app: FastAPI):
             print(f"   DATA_DIR 존재 여부: {DATA_DIR.exists()}")
         else:
             try:
-            evaluator = Evaluator(str(test_csv_path), str(answer_csv_path))
-            print("✅ Evaluator 초기화 완료")
+                evaluator = Evaluator(str(test_csv_path), str(answer_csv_path))
+                print("✅ Evaluator 초기화 완료")
             except Exception as e:
                 print(f"❌ Evaluator 초기화 실패: {e}")
                 import traceback
@@ -136,8 +136,8 @@ async def lifespan(app: FastAPI):
         
         # Solar API 클라이언트 초기화
         try:
-        solar_client = SolarAPIClient()
-        print("✅ Solar API 클라이언트 초기화 완료")
+            solar_client = SolarAPIClient()
+            print("✅ Solar API 클라이언트 초기화 완료")
         except Exception as e:
             print(f"❌ Solar API 클라이언트 초기화 실패: {e}")
             import traceback
