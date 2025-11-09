@@ -14,12 +14,12 @@ load_dotenv(dotenv_path=env_path)
 
 class SolarAPIClient:
     def __init__(self):
-        """Solar API 클라이언트 초기화 - 여러 API 키 지원"""
-        # 여러 API 키 로드 (SOLAR_API_KEY_1 ~ SOLAR_API_KEY_6)
+        """Solar API 클라이언트 초기화 - 여러 API 키 지원 (최대 10개)"""
+        # 여러 API 키 로드 (SOLAR_API_KEY_1 ~ SOLAR_API_KEY_10)
         self.api_keys = []
         self.clients = []
         
-        for i in range(1, 7):  # 1부터 6까지
+        for i in range(1, 11):  # 1부터 10까지
             key = os.getenv(f"SOLAR_API_KEY_{i}", "")
             # 유효한 키만 추가 (비어있지 않고, "your_api_key"로 시작하지 않음)
             if key and not key.startswith("your_api_key"):
@@ -49,11 +49,17 @@ class SolarAPIClient:
         if not self.api_keys:
             raise ValueError(
                 "Solar API 키가 설정되지 않았습니다.\n"
-                ".env 파일에 SOLAR_API_KEY_1 ~ SOLAR_API_KEY_6을 설정하거나\n"
+                ".env 파일에 SOLAR_API_KEY_1 ~ SOLAR_API_KEY_10을 설정하거나\n"
                 "환경변수로 SOLAR_API_KEY를 설정해주세요."
             )
         
         print(f"✅ {len(self.api_keys)}개의 Solar API 키를 로드했습니다.")
+        
+        # 키당 최대 동시 처리 수 (3개)
+        self.concurrent_per_key = 3
+        
+        # 각 키별 세마포어 생성 (키당 3개 동시 처리 제한)
+        self.key_semaphores = [asyncio.Semaphore(self.concurrent_per_key) for _ in self.clients]
         
         # 라운드로빈 방식으로 클라이언트 선택
         self.client_cycle = itertools.cycle(enumerate(self.clients))
@@ -62,6 +68,9 @@ class SolarAPIClient:
         self.model = "solar-pro2"
         self.max_retries = 3
         self.batch_delay = 0.5  # 배치 간 대기 시간 (초)
+        
+        total_concurrent = len(self.clients) * self.concurrent_per_key
+        print(f"📊 동시 처리 설정: 키당 {self.concurrent_per_key}개, 총 {total_concurrent}개 동시 처리 가능")
     
     async def _get_next_client(self):
         """라운드로빈 방식으로 다음 클라이언트 선택"""
@@ -70,39 +79,51 @@ class SolarAPIClient:
             return client_idx, client
     
     async def correct_sentence(self, prompt: str, err_sentence: str) -> str:
-        """단일 문장 교정"""
+        """단일 문장 교정 (키별 세마포어로 동시 처리 수 제한)"""
         system_prompt = prompt
         user_message = f"다음 문장을 교정해주세요: {err_sentence}"
         
+        last_error = None
+        last_client_idx = None
+        
+        # 최대 재시도 횟수만큼 시도
         for attempt in range(self.max_retries):
             try:
                 # 라운드로빈으로 클라이언트 선택
                 client_idx, client = await self._get_next_client()
+                last_client_idx = client_idx
                 
-                # 동기 함수를 비동기로 실행
-                loop = asyncio.get_event_loop()
-                response = await loop.run_in_executor(
-                    None,
-                    lambda: client.chat.completions.create(
-                        model=self.model,
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": user_message}
-                        ],
-                        temperature=0.1,
-                        max_tokens=500
+                # 해당 키의 세마포어 획득 (키당 최대 3개 동시 처리)
+                async with self.key_semaphores[client_idx]:
+                    # 동기 함수를 비동기로 실행
+                    loop = asyncio.get_event_loop()
+                    response = await loop.run_in_executor(
+                        None,
+                        lambda c=client, sp=system_prompt, um=user_message: c.chat.completions.create(
+                            model=self.model,
+                            messages=[
+                                {"role": "system", "content": sp},
+                                {"role": "user", "content": um}
+                            ],
+                            temperature=0.1,
+                            max_tokens=500
+                        )
                     )
-                )
-                
-                corrected = response.choices[0].message.content.strip()
-                return corrected
+                    
+                    corrected = response.choices[0].message.content.strip()
+                    return corrected
             
             except Exception as e:
+                last_error = e
+                # 재시도 전 대기 (지수 백오프)
                 if attempt < self.max_retries - 1:
-                    await asyncio.sleep(1 * (attempt + 1))  # 지수 백오프
-                else:
-                    print(f"Error correcting sentence (API key #{client_idx + 1}): {e}")
-                    return err_sentence  # 실패 시 원본 반환
+                    wait_time = 1 * (attempt + 1)
+                    await asyncio.sleep(wait_time)
+        
+        # 모든 재시도 실패
+        key_info = f"API key #{last_client_idx + 1}" if last_client_idx is not None else "모든 API key"
+        print(f"Error correcting sentence ({key_info}, {self.max_retries}회 시도 실패): {last_error}")
+        return err_sentence  # 실패 시 원본 반환
     
     async def correct_batch(
         self, 
@@ -118,41 +139,42 @@ class SolarAPIClient:
         results = []
         total = len(sentences)
         
-        # 동시 처리 수 제한 (rate limit 고려)
-        # API 키 개수에 따라 동시 처리 수 조정 (키당 최대 5개)
-        max_concurrent = len(self.clients) * 5
-        semaphore = asyncio.Semaphore(max_concurrent)
+        # 키당 동시 처리 수는 correct_sentence에서 세마포어로 관리됨
+        # 전체 동시 처리 수: 키 개수 × 키당 3개
+        total_concurrent = len(self.clients) * self.concurrent_per_key
         
-        print(f"📊 배치 처리 시작: {total}개 문장, {len(self.clients)}개 API 키 사용 (최대 동시 처리: {max_concurrent})")
+        print(f"📊 배치 처리 시작: {total}개 문장, {len(self.clients)}개 API 키 사용")
+        print(f"   키당 동시 처리: {self.concurrent_per_key}개, 총 동시 처리: {total_concurrent}개")
         
         # 완료된 작업 수 추적 (스레드 안전)
         completed = 0
         completed_lock = asyncio.Lock()
         start_time = time.time()
         
-        async def process_with_semaphore(idx, item):
+        async def process_sentence(idx, item):
             nonlocal completed
             
-            async with semaphore:
-                id_val, err_sentence = item
-                corrected = await self.correct_sentence(prompt, err_sentence)
-                
-                # 진행 상황 업데이트 (스레드 안전)
-                async with completed_lock:
-                    completed += 1
-                    current = completed
-                    elapsed = time.time() - start_time
-                    speed = current / elapsed if elapsed > 0 else 0
-                
-                # 콜백 호출 (완료될 때마다)
-                if callback:
-                    await callback(current, total, id_val)
-                
-                return (id_val, corrected)
+            # correct_sentence 내부에서 키별 세마포어로 동시 처리 수가 제한됨
+            id_val, err_sentence = item
+            corrected = await self.correct_sentence(prompt, err_sentence)
+            
+            # 진행 상황 업데이트 (스레드 안전)
+            async with completed_lock:
+                completed += 1
+                current = completed
+                elapsed = time.time() - start_time
+                speed = current / elapsed if elapsed > 0 else 0
+            
+            # 콜백 호출 (완료될 때마다)
+            if callback:
+                await callback(current, total, id_val)
+            
+            return (id_val, corrected)
         
         # 모든 문장을 비동기로 처리
+        # 각 correct_sentence 호출 시 키별 세마포어가 자동으로 동시 처리 수를 제한함
         tasks = [
-            process_with_semaphore(idx, item) 
+            process_sentence(idx, item) 
             for idx, item in enumerate(sentences)
         ]
         
