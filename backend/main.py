@@ -88,7 +88,7 @@ async def lifespan(app: FastAPI):
                     # 테스트 쿼리 실행
                     test_manager.get_leaderboard()
                     leaderboard_manager = test_manager
-                history_manager = SupabasePromptHistoryManager()
+                    history_manager = SupabasePromptHistoryManager()
                     print("✅ Supabase를 사용합니다 (API 키 검증 완료).")
                 except Exception as api_error:
                     # API 키 오류 발생 시 로컬 JSON으로 전환
