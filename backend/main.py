@@ -82,9 +82,24 @@ async def lifespan(app: FastAPI):
         try:
             init_supabase()
             if is_supabase_available():
-                leaderboard_manager = SupabaseLeaderboardManager()
-                history_manager = SupabasePromptHistoryManager()
-                print("✅ Supabase를 사용합니다.")
+                # Supabase API 키 검증 (간단한 쿼리 시도)
+                try:
+                    test_manager = SupabaseLeaderboardManager()
+                    # 테스트 쿼리 실행
+                    test_manager.get_leaderboard()
+                    leaderboard_manager = test_manager
+                    history_manager = SupabasePromptHistoryManager()
+                    print("✅ Supabase를 사용합니다 (API 키 검증 완료).")
+                except Exception as api_error:
+                    # API 키 오류 발생 시 로컬 JSON으로 전환
+                    error_msg = str(api_error)
+                    if "Invalid API key" in error_msg or "401" in error_msg or "Unauthorized" in error_msg:
+                        print(f"⚠️ Supabase API 키가 유효하지 않습니다. 로컬 JSON 파일을 사용합니다.")
+                        print(f"   오류: {api_error}")
+                    else:
+                        print(f"⚠️ Supabase 연결 오류. 로컬 JSON 파일을 사용합니다: {api_error}")
+                    leaderboard_manager = LeaderboardManager(filepath=str(BASE_DIR / "leaderboard.json"))
+                    history_manager = PromptHistoryManager(filepath=str(BASE_DIR / "prompt_history.json"))
             else:
                 raise Exception("Supabase 초기화 실패")
         except Exception as e:
@@ -326,8 +341,15 @@ async def get_leaderboard():
     """리더보드 조회"""
     if not leaderboard_manager:
         raise HTTPException(status_code=500, detail="리더보드 관리자가 초기화되지 않았습니다.")
-    leaderboard = leaderboard_manager.get_leaderboard()
-    return LeaderboardResponse(leaderboard=leaderboard)
+    
+    try:
+        leaderboard = leaderboard_manager.get_leaderboard()
+        return LeaderboardResponse(leaderboard=leaderboard)
+    except Exception as e:
+        # Supabase 오류 시 로컬 JSON으로 전환 시도 (런타임 전환은 지원하지 않음)
+        print(f"⚠️ 리더보드 조회 오류: {e}")
+        # 오류가 발생해도 빈 리더보드 반환 (서버는 계속 동작)
+        return LeaderboardResponse(leaderboard=[])
 
 @app.get("/api/history/{nickname}", response_model=PromptHistoryResponse)
 async def get_prompt_history(nickname: str):
