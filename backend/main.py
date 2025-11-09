@@ -33,17 +33,31 @@ except ImportError:
 # 경로 설정
 BASE_DIR = Path(__file__).parent.parent
 
-# 데이터 디렉터리: backend/data 우선, 없으면 레포 루트의 data 사용
+# 데이터 디렉터리: 여러 경로 확인 (Railway 환경 고려)
+# Railway에서는 작업 디렉토리가 /app이고, backend 폴더에서 실행됨
 DATA_DIR_CANDIDATES = [
+    BASE_DIR / "data",                      # repo_root/data (Railway에서 일반적)
     Path(__file__).parent / "data",         # backend/data
-    BASE_DIR / "data",                      # repo_root/data
+    Path("/app/data"),                      # Railway 절대 경로
+    Path("/app/backend/data"),              # Railway backend 절대 경로
 ]
+
+DATA_DIR = None
 for _cand in DATA_DIR_CANDIDATES:
-    if _cand.exists():
+    if _cand.exists() and _cand.is_dir():
         DATA_DIR = _cand
+        print(f"✅ DATA_DIR 발견: {DATA_DIR} (절대 경로: {DATA_DIR.resolve()})")
         break
-else:
-    DATA_DIR = DATA_DIR_CANDIDATES[0]
+    else:
+        print(f"⚠️ DATA_DIR 후보 확인: {_cand} (존재: {_cand.exists()})")
+
+if DATA_DIR is None:
+    # 기본값 설정 (로컬 개발 환경)
+    DATA_DIR = BASE_DIR / "data"
+    print(f"⚠️ DATA_DIR을 찾을 수 없어 기본값 사용: {DATA_DIR}")
+    print(f"   현재 작업 디렉토리: {Path.cwd()}")
+    print(f"   __file__ 위치: {Path(__file__).resolve()}")
+    print(f"   BASE_DIR: {BASE_DIR.resolve()}")
 
 FRONTEND_DIR = BASE_DIR / "frontend"
 PDF_DIR = BASE_DIR / "Solar_prompt_cookbook"

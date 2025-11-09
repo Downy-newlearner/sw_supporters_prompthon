@@ -6,6 +6,7 @@ import time
 from dotenv import load_dotenv
 from pathlib import Path
 import itertools
+import httpx
 
 # .env 파일 로드 (상위 디렉토리의 .env 파일)
 env_path = Path(__file__).parent.parent / '.env'
@@ -23,9 +24,12 @@ class SolarAPIClient:
             # 유효한 키만 추가 (비어있지 않고, "your_api_key"로 시작하지 않음)
             if key and not key.startswith("your_api_key"):
                 self.api_keys.append(key)
+                # httpx 클라이언트를 직접 생성하여 proxies 문제 회피
+                http_client = httpx.Client(timeout=60.0)
                 client = OpenAI(
                     api_key=key,
-                    base_url="https://api.upstage.ai/v1/solar"
+                    base_url="https://api.upstage.ai/v1/solar",
+                    http_client=http_client
                 )
                 self.clients.append(client)
         
@@ -33,9 +37,12 @@ class SolarAPIClient:
         single_key = os.getenv("SOLAR_API_KEY", "")
         if single_key and not single_key.startswith("your_api_key") and single_key not in self.api_keys:
             self.api_keys.append(single_key)
+            # httpx 클라이언트를 직접 생성하여 proxies 문제 회피
+            http_client = httpx.Client(timeout=60.0)
             client = OpenAI(
                 api_key=single_key,
-                base_url="https://api.upstage.ai/v1/solar"
+                base_url="https://api.upstage.ai/v1/solar",
+                http_client=http_client
             )
             self.clients.append(client)
         

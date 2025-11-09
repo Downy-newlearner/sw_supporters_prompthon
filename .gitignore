@@ -25,13 +25,15 @@ build/
 firebase-key.json
 **/firebase-key.json
 
-# 데이터 파일
-data/train.csv
-data/test.csv
+
 
 # 생성된 파일
 *.log
+# CSV 파일 중 필요한 파일은 예외 처리
 *.csv
+!data/test_from_train.csv
+!data/answer_from_train.csv
+!data/sample_submission.csv
 submissions/
 leaderboard.json
 prompt_history.json
