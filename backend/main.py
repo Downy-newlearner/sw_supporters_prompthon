@@ -278,14 +278,14 @@ async def submit_prompt(request: SubmitRequest):
         print(f"📥 제출 요청 수신: nickname={request.nickname}, prompt_length={len(request.prompt) if request.prompt else 0}")
         
         # 초기화 상태 확인
-    if not solar_client:
+        if not solar_client:
             print("❌ Solar API 클라이언트가 초기화되지 않았습니다.")
-        raise HTTPException(status_code=500, detail="Solar API 클라이언트가 초기화되지 않았습니다.")
-    
-    if not evaluator:
+            raise HTTPException(status_code=500, detail="Solar API 클라이언트가 초기화되지 않았습니다.")
+        
+        if not evaluator:
             print("❌ 평가 시스템이 초기화되지 않았습니다.")
-        raise HTTPException(status_code=500, detail="평가 시스템이 초기화되지 않았습니다.")
-    
+            raise HTTPException(status_code=500, detail="평가 시스템이 초기화되지 않았습니다.")
+        
         if not leaderboard_manager:
             print("❌ 리더보드 관리자가 초기화되지 않았습니다.")
             raise HTTPException(status_code=500, detail="리더보드 관리자가 초기화되지 않았습니다.")
@@ -294,37 +294,37 @@ async def submit_prompt(request: SubmitRequest):
             print("❌ 히스토리 관리자가 초기화되지 않았습니다.")
             raise HTTPException(status_code=500, detail="히스토리 관리자가 초기화되지 않았습니다.")
         
-    nickname = request.nickname.strip()
-    prompt = request.prompt.strip()
-    
+        nickname = request.nickname.strip()
+        prompt = request.prompt.strip()
+        
         if not nickname:
             raise HTTPException(status_code=400, detail="닉네임을 입력해주세요.")
         
-    if not prompt:
-        raise HTTPException(status_code=400, detail="프롬프트를 입력해주세요.")
-    
+        if not prompt:
+            raise HTTPException(status_code=400, detail="프롬프트를 입력해주세요.")
+        
         print(f"✅ 제출 요청 검증 완료: {nickname}")
         
-    # 비동기 작업을 백그라운드에서 실행
+        # 비동기 작업을 백그라운드에서 실행
         task = asyncio.create_task(
-        process_submission(
-            nickname,
-            prompt,
-            evaluator,
-            solar_client,
-            leaderboard_manager,
-            history_manager
+            process_submission(
+                nickname,
+                prompt,
+                evaluator,
+                solar_client,
+                leaderboard_manager,
+                history_manager
+            )
         )
-    )
         print(f"✅ 백그라운드 작업 시작: {nickname} (task={task})")
-    
-    # 즉시 응답 반환 (작업은 백그라운드에서 진행)
-    return SubmitResponse(
-        success=True,
-        message="처리를 시작했습니다. 진행 상황은 실시간으로 업데이트됩니다.",
-        score=0.0,
-        total_processed=0
-    )
+        
+        # 즉시 응답 반환 (작업은 백그라운드에서 진행)
+        return SubmitResponse(
+            success=True,
+            message="처리를 시작했습니다. 진행 상황은 실시간으로 업데이트됩니다.",
+            score=0.0,
+            total_processed=0
+        )
     except HTTPException as he:
         # HTTPException은 그대로 전달
         print(f"❌ HTTPException 발생: {he.status_code} - {he.detail}")
@@ -343,8 +343,8 @@ async def get_leaderboard():
         raise HTTPException(status_code=500, detail="리더보드 관리자가 초기화되지 않았습니다.")
     
     try:
-    leaderboard = leaderboard_manager.get_leaderboard()
-    return LeaderboardResponse(leaderboard=leaderboard)
+        leaderboard = leaderboard_manager.get_leaderboard()
+        return LeaderboardResponse(leaderboard=leaderboard)
     except Exception as e:
         # Supabase 오류 시 로컬 JSON으로 전환 시도 (런타임 전환은 지원하지 않음)
         print(f"⚠️ 리더보드 조회 오류: {e}")
