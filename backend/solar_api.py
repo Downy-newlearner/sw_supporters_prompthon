@@ -67,7 +67,12 @@ class SolarAPIClient:
         # 키당 최대 5개 동시 처리 (30명 사용자, 24개 제출 동시 처리 최적화)
         # 라운드로빈으로 모든 키를 공유하므로 총 20개 키 × 5개 = 100개 동시 처리 가능
         self.concurrent_per_key = 5
-        self.key_semaphores = [asyncio.Semaphore(self.concurrent_per_key) for _ in self.clients]
+        # Semaphore는 이벤트 루프 없이도 생성 가능하지만, 일관성을 위해 지연 초기화
+        self.key_semaphores = None
+        
+        # 라운드로빈 방식으로 클라이언트 선택 (이전 방식)
+        # 동기 초기화이므로 즉시 초기화 가능
+        self.client_cycle = None
         
         # 우선순위 큐: (submission_count, api_key_index) 튜플의 리스트
         # submission_count가 적을수록 우선순위가 높음
@@ -75,14 +80,19 @@ class SolarAPIClient:
         heapq.heapify(self.priority_queue)
         
         # 우선순위 큐와 submission_count 딕셔너리를 보호하는 락
-        self.allocation_lock = asyncio.Lock()
+        # 동기 초기화이므로 지연 초기화
+        self.allocation_lock = None
         
         # 대기 중인 제출을 위한 큐: (event, nickname)
         # event는 제출이 할당될 때까지 대기하는 이벤트
-        self.waiting_submissions = asyncio.Queue()
+        # 동기 초기화이므로 지연 초기화
+        self.waiting_submissions = None
         
-        # 대기 중인 제출 처리 태스크 시작
-        self.processing_waiting = asyncio.create_task(self._process_waiting_submissions())
+        # 대기 중인 제출 처리 태스크 (지연 초기화)
+        # __init__는 동기 함수이므로 이벤트 루프가 없을 수 있음
+        # 첫 번째 비동기 메서드 호출 시 초기화
+        self.processing_waiting = None
+        self._task_initialized = False
         
         self.model = "solar-pro2"
         self.max_retries = 3
@@ -93,11 +103,23 @@ class SolarAPIClient:
         print(f"   라운드로빈 방식으로 모든 API 키 공유 사용")
         print(f"   키당 최대 {self.concurrent_per_key}개 동시 처리, 총 {total_concurrent}개 문장 동시 처리 가능")
     
+    def _ensure_async_objects(self):
+        """비동기 객체들 초기화 (첫 번째 비동기 메서드 호출 시)"""
+        if self.client_cycle is None:
+            self.client_cycle = itertools.cycle(enumerate(self.clients))
+        if self.key_semaphores is None:
+            self.key_semaphores = [asyncio.Semaphore(self.concurrent_per_key) for _ in self.clients]
+        if self.allocation_lock is None:
+            self.allocation_lock = asyncio.Lock()
+        if self.waiting_submissions is None:
+            self.waiting_submissions = asyncio.Queue()
+    
     async def _assign_api_key(self) -> Optional[int]:
         """
         우선순위 큐를 사용하여 가장 적은 제출을 담당 중인 API 키 할당
         할당 가능한 API 키가 없으면 None 반환 (큐에서 대기해야 함)
         """
+        self._ensure_async_objects()
         async with self.allocation_lock:
             if not self.priority_queue:
                 return None
@@ -123,6 +145,7 @@ class SolarAPIClient:
         제출 완료 시 API 키 해제
         해제 후 대기 중인 제출이 있으면 즉시 할당 시도
         """
+        self._ensure_async_objects()
         async with self.allocation_lock:
             # submission_count 감소
             self.api_key_submission_count[api_key_index] -= 1
@@ -165,6 +188,9 @@ class SolarAPIClient:
         대기 중인 제출을 처리하는 백그라운드 태스크
         API 키가 해제될 때마다 대기 중인 제출에 할당 시도
         """
+        # 비동기 객체들 초기화 (백그라운드 태스크 시작 시)
+        self._ensure_async_objects()
+        
         while True:
             try:
                 # 짧은 간격으로 대기 큐 확인
@@ -208,6 +234,14 @@ class SolarAPIClient:
         제출에 API 키 할당 요청
         할당 가능하면 즉시 반환, 아니면 큐에서 대기 후 반환
         """
+        # 비동기 객체들 초기화
+        self._ensure_async_objects()
+        
+        # 백그라운드 태스크 초기화 (첫 번째 비동기 호출 시)
+        if not self._task_initialized:
+            self.processing_waiting = asyncio.create_task(self._process_waiting_submissions())
+            self._task_initialized = True
+        
         # 먼저 즉시 할당 시도
         api_key_index = await self._assign_api_key()
         
@@ -236,6 +270,9 @@ class SolarAPIClient:
         단일 문장 교정 (라운드로빈 방식으로 API 키 선택)
         이전 방식처럼 모든 API 키를 공유하여 사용
         """
+        # 비동기 객체들 초기화
+        self._ensure_async_objects()
+        
         system_prompt = prompt
         user_message = f"다음 문장을 교정해주세요: {err_sentence}"
         
@@ -252,23 +289,23 @@ class SolarAPIClient:
                 
                 # 해당 키의 세마포어 획득 (동시 처리 수 제한)
                 async with self.key_semaphores[client_idx]:
-                # 동기 함수를 비동기로 실행
-                loop = asyncio.get_event_loop()
-                response = await loop.run_in_executor(
-                    None,
+                    # 동기 함수를 비동기로 실행
+                    loop = asyncio.get_event_loop()
+                    response = await loop.run_in_executor(
+                        None,
                         lambda c=client, sp=system_prompt, um=user_message: c.chat.completions.create(
-                        model=self.model,
-                        messages=[
+                            model=self.model,
+                            messages=[
                                 {"role": "system", "content": sp},
                                 {"role": "user", "content": um}
-                        ],
-                        temperature=0.1,
-                        max_tokens=500
+                            ],
+                            temperature=0.1,
+                            max_tokens=500
+                        )
                     )
-                )
-                
-                corrected = response.choices[0].message.content.strip()
-                return corrected
+                    
+                    corrected = response.choices[0].message.content.strip()
+                    return corrected
             
             except Exception as e:
                 last_error = e
@@ -280,7 +317,7 @@ class SolarAPIClient:
         # 모든 재시도 실패
         key_info = f"API key #{last_client_idx + 1}" if last_client_idx is not None else "모든 API key"
         print(f"Error correcting sentence ({key_info}, {self.max_retries}회 시도 실패): {last_error}")
-                    return err_sentence  # 실패 시 원본 반환
+        return err_sentence  # 실패 시 원본 반환
     
     async def correct_batch(
         self, 
@@ -302,15 +339,15 @@ class SolarAPIClient:
         
         try:
             print(f"📊 배치 처리 시작: {nickname} - {total}개 문장, 모든 API 키 공유 사용 (라운드로빈)")
-        
-        # 완료된 작업 수 추적 (스레드 안전)
-        completed = 0
-        completed_lock = asyncio.Lock()
-        start_time = time.time()
-        
-            async def process_sentence(idx, item):
-            nonlocal completed
             
+            # 완료된 작업 수 추적 (스레드 안전)
+            completed = 0
+            completed_lock = asyncio.Lock()
+            start_time = time.time()
+            
+            async def process_sentence(idx, item):
+                nonlocal completed
+                
                 # 라운드로빈 방식으로 모든 API 키 공유 사용 (이전 방식)
                 id_val, err_sentence = item
                 corrected = await self.correct_sentence(prompt, err_sentence)
@@ -326,20 +363,20 @@ class SolarAPIClient:
                     await callback(current, total, id_val)
                 
                 return (id_val, corrected)
-        
+            
             # 모든 문장을 비동기로 처리 (이전 방식과 동일)
             # 라운드로빈으로 모든 API 키를 공유하여 사용
-        tasks = [
+            tasks = [
                 process_sentence(idx, item) 
-            for idx, item in enumerate(sentences)
-        ]
-        
-        results = await asyncio.gather(*tasks)
-        
-        total_time = time.time() - start_time
+                for idx, item in enumerate(sentences)
+            ]
+            
+            results = await asyncio.gather(*tasks)
+            
+            total_time = time.time() - start_time
             print(f"✅ 배치 처리 완료: {nickname} - {total}개 문장 ({total_time:.2f}초, 평균 {total/total_time:.2f}개/초)")
-        
-        return results
+            
+            return results
             
         finally:
             # 제출 완료 후 API 키 해제
