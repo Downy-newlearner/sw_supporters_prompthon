@@ -338,12 +338,17 @@ async def submit_prompt(request: SubmitRequest):
 
 @app.get("/api/leaderboard", response_model=LeaderboardResponse)
 async def get_leaderboard():
-    """리더보드 조회"""
+    """리더보드 조회 (비동기 실행)"""
     if not leaderboard_manager:
         raise HTTPException(status_code=500, detail="리더보드 관리자가 초기화되지 않았습니다.")
     
     try:
-        leaderboard = leaderboard_manager.get_leaderboard()
+        # 동기 함수를 별도 스레드에서 실행 (블로킹 방지)
+        loop = asyncio.get_event_loop()
+        leaderboard = await loop.run_in_executor(
+            None,  # 기본 ThreadPoolExecutor 사용
+            leaderboard_manager.get_leaderboard
+        )
         return LeaderboardResponse(leaderboard=leaderboard)
     except Exception as e:
         # Supabase 오류 시 로컬 JSON으로 전환 시도 (런타임 전환은 지원하지 않음)
@@ -353,10 +358,17 @@ async def get_leaderboard():
 
 @app.get("/api/history/{nickname}", response_model=PromptHistoryResponse)
 async def get_prompt_history(nickname: str):
-    """사용자의 프롬프트 히스토리 조회"""
+    """사용자의 프롬프트 히스토리 조회 (비동기 실행)"""
     if not history_manager:
         raise HTTPException(status_code=500, detail="히스토리 관리자가 초기화되지 않았습니다.")
-    history = history_manager.get_history(nickname)
+    
+    # 동기 함수를 별도 스레드에서 실행 (블로킹 방지)
+    loop = asyncio.get_event_loop()
+    history = await loop.run_in_executor(
+        None,
+        history_manager.get_history,
+        nickname
+    )
     return PromptHistoryResponse(
         history=history,
         total_submissions=len(history)
@@ -487,11 +499,24 @@ async def process_submission(
         # 4. 저장 단계
         await send_progress(nickname, "saving", 96, "💾 리더보드 저장 중...")
         
-        leaderboard_manager.update_score(nickname, score)
+        # 동기 함수를 별도 스레드에서 실행 (블로킹 방지)
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(
+            None,
+            leaderboard_manager.update_score,
+            nickname,
+            score
+        )
         
         await send_progress(nickname, "saving", 97, "💾 히스토리 저장 중...")
         
-        history_manager.add_submission(nickname, prompt, score)
+        await loop.run_in_executor(
+            None,
+            history_manager.add_submission,
+            nickname,
+            prompt,
+            score
+        )
         
         await send_progress(nickname, "saving", 98, "💾 제출 파일 저장 중...")
         
